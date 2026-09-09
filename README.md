@@ -214,57 +214,53 @@ An end-to-end intelligent job aggregation and resume matching application. Uploa
 
 ## 🚀 Hosting & Deployment Guide
 
-This project is decoupled into a **Flask API Backend** and a **React/Vite Frontend**. You can host both easily using modern cloud platforms.
+### 🌟 Method 1: Unified Full-Stack on Render (Easiest — 1 Free URL for Both!)
 
-### Option A: Deploy Backend to [Render](https://render.com) (Recommended)
+Because we have configured a multi-stage `Dockerfile` and Flask static SPA serving, you can host the **entire full-stack app (React frontend + Flask backend)** on a single free Render Web Service!
 
-1. Push this repository to your GitHub account.
-2. Sign in to [Render](https://dashboard.render.com/) and click **New +** → **Web Service**.
-3. Connect your GitHub repository.
-4. Set the following build and start configurations:
-   - **Environment**: `Python 3`
+1. Go to your [Render Dashboard](https://dashboard.render.com/) and click **New +** → **Web Service**.
+2. Select **Build and deploy from a Git repository** and connect `Dibbodas1/job-search-ai`.
+3. Choose **Docker** as the runtime (Render will automatically detect the root `Dockerfile`).
+4. Set the **Instance Type** to **Free**.
+5. Under **Environment Variables**, add:
+   - `GEMINI_API_KEY`: *(Your Google Gemini API Key from [Google AI Studio](https://aistudio.google.com/))*
+   - `GEMINI_BASE_URL`: `https://generativelanguage.googleapis.com/v1beta/openai/`
+6. Click **Deploy Web Service**.
+7. Once deployed, Render will give you a public URL (e.g. `https://job-search-ai.onrender.com`). Both the React UI and Flask API will be running live together on that single URL!
+
+---
+
+### 🚀 Method 2: Decoupled Deployment (Frontend on Vercel + Backend on Render)
+
+If you prefer deploying the frontend and backend on separate specialized platforms:
+
+#### Step 1: Deploy Backend to [Render](https://render.com)
+1. In [Render Dashboard](https://dashboard.render.com/), create a **New Web Service** connected to `job-search-ai`.
+2. Select **Python 3** environment:
    - **Build Command**: `pip install -r requirements.txt`
    - **Start Command**: `gunicorn server:app`
-5. Under **Environment Variables**, add:
-   - `GEMINI_API_KEY`: *(Your Google AI Studio key)*
-   - `GEMINI_BASE_URL`: `https://generativelanguage.googleapis.com/v1beta/openai/`
-   - `PYTHON_VERSION`: `3.10.12`
-6. Click **Create Web Service**. Once deployed, copy your Render public URL (e.g. `https://job-search-api.onrender.com`).
+3. Add Environment Variable:
+   - `GEMINI_API_KEY`: *(Your Google Gemini API Key)*
+4. Deploy and copy your live backend URL (e.g. `https://job-search-backend.onrender.com`).
 
----
-
-### Option B: Deploy Backend to [Railway](https://railway.app)
-
-1. Create a new project on Railway and select **Deploy from GitHub repo**.
-2. Select your repository.
-3. Railway will automatically detect the Python environment and the `Procfile`.
-4. Add your `GEMINI_API_KEY` in the **Variables** tab.
-5. Generate a public domain under **Settings** → **Networking**.
-
----
-
-### Option C: Deploy Frontend to [Vercel](https://vercel.com) (Recommended)
-
-1. Sign in to [Vercel](https://vercel.com) and click **Add New** → **Project**.
-2. Import your GitHub repository.
-3. In the project configuration:
+#### Step 2: Deploy Frontend to [Vercel](https://vercel.com)
+1. Go to [Vercel](https://vercel.com) and click **Add New** → **Project**.
+2. Import `Dibbodas1/job-search-ai`.
+3. Configure the project:
    - **Root Directory**: Click Edit and select `frontend`
    - **Framework Preset**: `Vite`
-   - **Build Command**: `npm run build`
-   - **Output Directory**: `dist`
-4. In `frontend/vite.config.js` (or via environment variables), point your API proxy or requests to your live backend URL (e.g. `https://job-search-api.onrender.com`).
-5. Click **Deploy**.
+4. Under **Environment Variables**, add:
+   - `VITE_API_BASE`: `https://job-search-backend.onrender.com/api` *(replace with your actual Render backend URL)*
+5. Click **Deploy**. Vercel will build and deploy your React app to a fast global CDN!
 
 ---
 
-### Option D: Deploy Frontend to [Netlify](https://netlify.com)
+### 🚂 Method 3: Deploy to [Railway](https://railway.app)
 
-1. Connect your repository to Netlify.
-2. Set:
-   - **Base directory**: `frontend`
-   - **Build command**: `npm run build`
-   - **Publish directory**: `frontend/dist`
-3. Click **Deploy Site**.
+1. Sign up on [Railway](https://railway.app) and click **New Project** → **Deploy from GitHub repo**.
+2. Select `job-search-ai`. Railway will automatically build using the `Dockerfile` or `Procfile`.
+3. Go to the **Variables** tab and add `GEMINI_API_KEY`.
+4. Under **Settings** → **Networking**, click **Generate Domain**.
 
 ---
 
