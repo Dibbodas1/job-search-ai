@@ -25,8 +25,22 @@ from scrape_jobs import (
     generate_search_queries_from_skills
 )
 
-app = Flask(__name__)
+frontend_dist = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'frontend', 'dist')
+if os.path.exists(frontend_dist):
+    app = Flask(__name__, static_folder=frontend_dist, static_url_path='')
+else:
+    app = Flask(__name__)
 CORS(app)
+
+@app.route('/')
+def index():
+    if os.path.exists(os.path.join(frontend_dist, 'index.html')):
+        return send_file(os.path.join(frontend_dist, 'index.html'))
+    return jsonify({
+        "status": "online",
+        "service": "Job Search AI API Server",
+        "message": "API backend is running. Build frontend with 'npm run build' inside frontend/ to serve client directly."
+    })
 
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY") or os.getenv("GOOGLE_API_KEY")
 GEMINI_BASE_URL = os.getenv("GEMINI_BASE_URL", "https://generativelanguage.googleapis.com/v1beta/openai/")
@@ -718,7 +732,20 @@ def download_excel():
         return jsonify({"error": str(e)}), 500
 
 
+@app.route('/<path:path>')
+def serve_spa(path):
+    if not path.startswith('api'):
+        file_path = os.path.join(frontend_dist, path)
+        if os.path.exists(file_path):
+            return send_file(file_path)
+        index_file = os.path.join(frontend_dist, 'index.html')
+        if os.path.exists(index_file):
+            return send_file(index_file)
+    return jsonify({"error": "Resource not found"}), 404
+
+
 if __name__ == '__main__':
+    port = int(os.getenv("PORT", 5000))
     print("=" * 60)
     print("⚡ JobPulse AI — API Server")
     print("=" * 60)
@@ -728,6 +755,6 @@ if __name__ == '__main__':
     print(f"    POST /api/upload-cv")
     print(f"    POST /api/search")
     print(f"    POST /api/download-excel")
-    print(f"  Server: http://localhost:5000")
-    app.run(debug=False, port=5000, host='0.0.0.0', threaded=True)
+    print(f"  Server: http://localhost:{port}")
+    app.run(debug=False, port=port, host='0.0.0.0', threaded=True)
 

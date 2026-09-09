@@ -7,7 +7,7 @@ import ResultsDashboard from './components/ResultsDashboard'
 import JobModal from './components/JobModal'
 import { ZapIcon, RefreshCwIcon, AlertCircleIcon, XIcon, CheckIcon } from './components/Icons'
 
-const API_BASE = '/api'
+const API_BASE = import.meta.env.VITE_API_BASE || '/api'
 
 // Default skills requested by user: React, MongoDB, Express.js, and JavaScript
 const DEFAULT_MERN_PROFILE = {
