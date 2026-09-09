@@ -1,0 +1,10 @@
+### 🌟 DAILY 24-HOUR JOB SEARCH PROMPT (Copy-paste or just say "run prompts.txt")
+
+@[c:\Users\User\Desktop\job search\cv\cv.pdf]
+Using Apify and integrated job boards (LinkedIn, BDJobs.com, Remotive, Jobicy, RemoteOK), find me all fresh jobs posted in the last 24 hours matching my resume for Full Stack Developer, MERN Stack Developer, React.js, Next.js, Frontend, and Node.js roles.
+
+Requirements:
+1. Bangladesh Section: 10-15 top jobs in Dhaka, Chittagong, and all Bangladesh (Onsite/Hybrid/Remote).
+2. Remote Worldwide Section: 10-15 top high-paying remote developer jobs worldwide hiring internationally.
+3. For each job include: #, Job Title, Company, Location, Date Posted, Match Score out of 100 (scored against my CV), Match Reason / Matched Skills, Remote/Onsite status, Required Experience, Source platform, and Direct Apply Link (clickable).
+4. Output: Save the results to a separate dated Excel file named with today's date (e.g. Job_Matches_YYYY-MM-DD.xlsx) with a dated sheet tab, and provide me with a summary table.

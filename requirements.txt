@@ -1,0 +1,12 @@
+flask
+flask-cors
+PyPDF2
+openai
+requests
+python-dateutil
+beautifulsoup4
+openpyxl
+python-dotenv
+playwright
+crawlee[playwright]
+gunicorn
