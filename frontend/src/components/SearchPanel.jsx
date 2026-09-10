@@ -105,7 +105,7 @@ export default function SearchPanel({ config, onChange, onSearch }) {
           </div>
           <span className="search-badge">
             <GlobeIcon size={13} />
-            Live LinkedIn Feeds
+            8 Job Networks Active
           </span>
         </div>
 
@@ -279,18 +279,35 @@ export default function SearchPanel({ config, onChange, onSearch }) {
           </div>
         </div>
 
-        {/* ─── Target Channels Indicator ───────────────────────────────── */}
+        {/* ─── Target Channels & Platforms Indicator ───────────────────────── */}
         <div className="sources-ready-bar">
-          <span className="sources-ready-title">Target Channels ({locations.length}):</span>
+          <div className="sources-ready-header-row">
+            <span className="sources-ready-title">Active Job Platforms (8 Networks):</span>
+            <div className="platform-mini-badges">
+              <span className="mini-plat-pill"><span className="mini-dot" style={{ background: '#f59e0b' }} />🇧🇩 BDjobs</span>
+              <span className="mini-plat-pill"><span className="mini-dot" style={{ background: '#003a9b' }} />🔍 Indeed</span>
+              <span className="mini-plat-pill"><span className="mini-dot" style={{ background: '#0a66c2' }} />💼 LinkedIn</span>
+              <span className="mini-plat-pill"><span className="mini-dot" style={{ background: '#14b8a6' }} />🏠 WeWorkRemotely</span>
+              <span className="mini-plat-pill"><span className="mini-dot" style={{ background: '#10b981' }} />🌐 Remotive</span>
+              <span className="mini-plat-pill"><span className="mini-dot" style={{ background: '#ec4899' }} />🟢 RemoteOK</span>
+              <span className="mini-plat-pill"><span className="mini-dot" style={{ background: '#f97316' }} />📋 Jobicy</span>
+              <span className="mini-plat-pill"><span className="mini-dot" style={{ background: '#8b5cf6' }} />⚡ Arbeitnow</span>
+            </div>
+          </div>
           <div className="sources-ready-list">
             {locations.map((locItem, i) => {
               const loc = locItem.location || 'Location'
+              const locLower = loc.toLowerCase()
+              const isBD = locLower.includes('bangladesh') || locLower.includes('dhaka')
               const wp = locItem.workplace || 'all'
               const wpName = wp === 'all' ? 'All Workplace Modes' : wp.toUpperCase()
+              const networks = isBD
+                ? 'BDjobs + Indeed + LinkedIn'
+                : 'LinkedIn + WeWorkRemotely + Remotive + Jobicy + RemoteOK + Arbeitnow'
               return (
                 <span className="source-ready-tag" key={locItem.id || i}>
                   <CheckIcon size={11} className="source-check-icon" />
-                  LinkedIn ({loc} · {wpName})
+                  <strong>{loc}</strong> ({wpName}) · <em>{networks}</em>
                 </span>
               )
             })}
@@ -305,10 +322,10 @@ export default function SearchPanel({ config, onChange, onSearch }) {
             id="search-btn"
           >
             <SearchIcon size={18} />
-            <span>Scan LinkedIn Jobs ({locations.length} Locations)</span>
+            <span>Scan 8 Platforms ({locations.length} Location Targets)</span>
           </button>
           <span className="search-time-note">
-            Crawling live LinkedIn feeds for {locations.map(l => `${l.location || 'Location'} (${l.workplace})`).join(', ')} · Crawlee &amp; Playwright
+            Concurrent multi-source search across BDjobs, Indeed, LinkedIn, WeWorkRemotely, Remotive, Jobicy, RemoteOK &amp; Arbeitnow
           </span>
         </div>
       </div>

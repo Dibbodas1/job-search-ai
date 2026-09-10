@@ -24,16 +24,26 @@ function getRemoteType(status) {
 }
 
 function getSourceMeta(source) {
-  const s = (source || '').toLowerCase()
-  if (s.includes('linkedin')) return { label: 'LinkedIn', class: 'source-linkedin' }
-  if (s.includes('remotive')) return { label: 'Remotive', class: 'source-remotive' }
-  if (s.includes('jobicy')) return { label: 'Jobicy', class: 'source-jobicy' }
-  if (s.includes('remoteok')) return { label: 'RemoteOK', class: 'source-remoteok' }
-  if (s.includes('arbeitnow')) return { label: 'Arbeitnow', class: 'source-arbeitnow' }
-  return { label: source || 'External', class: 'source-default' }
+  const s = (source || '').toLowerCase().replace(/[\s\-\.]/g, '')
+  if (s.includes('linkedin')) return { label: 'LinkedIn', icon: '💼', class: 'source-linkedin' }
+  if (s.includes('remotive')) return { label: 'Remotive', icon: '🌐', class: 'source-remotive' }
+  if (s.includes('jobicy')) return { label: 'Jobicy', icon: '📋', class: 'source-jobicy' }
+  if (s.includes('remoteok')) return { label: 'RemoteOK', icon: '🟢', class: 'source-remoteok' }
+  if (s.includes('arbeitnow')) return { label: 'Arbeitnow', icon: '⚡', class: 'source-arbeitnow' }
+  if (s.includes('weworkremotely') || s.includes('wwr')) return { label: 'WeWorkRemotely', icon: '🏠', class: 'source-wwr' }
+  if (s.includes('bdjobs')) return { label: 'BDjobs', icon: '🇧🇩', class: 'source-bdjobs' }
+  if (s.includes('indeed')) return { label: 'Indeed', icon: '🔍', class: 'source-indeed' }
+  return { label: source || 'External', icon: '📌', class: 'source-default' }
 }
 
-function formatJobLink(link, jobId) {
+function formatJobLink(link, jobId, source) {
+  const srcLower = (source || '').toLowerCase()
+  const isLinkedIn = srcLower.includes('linkedin') || (!source && link && link.includes('linkedin.com'))
+  if (!isLinkedIn) {
+    if (link && (link.startsWith('http://') || link.startsWith('https://'))) return link
+    if (link && link.startsWith('/')) return `https://${link.slice(1)}`
+    return link || '#'
+  }
   if (jobId && /^\d+$/.test(String(jobId).trim())) {
     return `https://www.linkedin.com/jobs/view/${String(jobId).trim()}/`
   }
@@ -156,12 +166,12 @@ export default function JobModal({ job, onClose }) {
 
           {(job.link || job.job_id) && (
             <a
-              href={formatJobLink(job.link, job.job_id)}
+              href={formatJobLink(job.link, job.job_id, job.source)}
               target="_blank"
               rel="noopener noreferrer"
               className="btn-primary modal-apply-cta"
             >
-              <span>Apply on LinkedIn</span>
+              <span>Apply on {job.source || 'LinkedIn'}</span>
               <ExternalLinkIcon size={15} />
             </a>
           )}

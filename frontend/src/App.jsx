@@ -219,7 +219,7 @@ export default function App() {
       const url = URL.createObjectURL(blob)
       const a = document.createElement('a')
       a.href = url
-      a.download = `LinkedIn_Job_Matches_${new Date().toISOString().slice(0, 10)}.xlsx`
+      a.download = `MultiSource_Job_Matches_${new Date().toISOString().slice(0, 10)}.xlsx`
       document.body.appendChild(a)
       a.click()
       a.remove()
@@ -266,7 +266,7 @@ export default function App() {
             </div>
             <div className="brand-text">
               <span className="brand-name">JobPulse</span>
-              <span className="brand-tag">LinkedIn AI</span>
+              <span className="brand-tag">Multi-Platform AI</span>
             </div>
           </div>
 
@@ -284,7 +284,7 @@ export default function App() {
             <div className="step-divider" />
             <div className={`step-item ${currentStep === 3 ? 'step-item-active' : ''}`}>
               <span className="step-num">3</span>
-              <span className="step-label">LinkedIn Matches</span>
+              <span className="step-label">Multi-Source Matches</span>
             </div>
           </div>
 
@@ -349,7 +349,7 @@ export default function App() {
             <div className="workspace-header">
               <h2 className="workspace-title">Skills Profile Ready for Matching</h2>
               <p className="workspace-subtitle">
-                Customize your technical skills and target location below (search any city, state, or country), then launch the live LinkedIn job search.
+                Customize your technical skills and target locations below, then launch the multi-platform search across BDjobs, Indeed, LinkedIn, WeWorkRemotely, and more.
               </p>
             </div>
 

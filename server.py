@@ -22,7 +22,8 @@ from scrape_jobs import (
     extract_experience, classify_remote, classify_workplace, is_tech_job,
     normalize_dedup, format_date_str, is_within_timeframe, write_excel,
     RESUME_SKILLS, normalize_linkedin_url, fetch_linkedin_playwright_jobs,
-    generate_search_queries_from_skills
+    generate_search_queries_from_skills,
+    fetch_weworkremotely_jobs, fetch_bdjobs_jobs, fetch_indeed_bd_jobs,
 )
 
 frontend_dist = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'frontend', 'dist')
@@ -380,13 +381,13 @@ def search_jobs():
 
             print(f"\n--- [API] Searching Target: '{loc_name}' (workplace={loc_wp}, is_worldwide={is_worldwide}) ---")
 
+            # ── Build LinkedIn queries ────────────────────────────────────────
             if is_worldwide:
                 loc_queries = generate_search_queries_from_skills(skills, "Worldwide", is_remote=True)
                 loc_queries.append(('Full Stack Developer Remote', 'Worldwide'))
                 loc_queries.append(('React Developer Remote', 'Worldwide'))
                 loc_queries.append(('Software Engineer Remote', 'Worldwide'))
                 loc_queries = list(dict.fromkeys(loc_queries))[:10]
-                raw_candidates = fetch_linkedin_playwright_jobs(loc_queries, timeframe=timeframe, is_remote=True, workplace=loc_wp)
             else:
                 loc_queries = generate_search_queries_from_skills(skills, loc_name, is_remote=(loc_wp == 'remote'))
                 if loc_name.lower() in ('bangladesh', 'bd'):
@@ -397,11 +398,60 @@ def search_jobs():
                         loc_queries.append(('Software Engineer', 'Dhaka'))
                         loc_queries.append(('Full Stack Developer', 'Dhaka'))
                 loc_queries = list(dict.fromkeys(loc_queries))[:10]
-                raw_candidates = fetch_linkedin_playwright_jobs(loc_queries, timeframe=timeframe, is_remote=(loc_wp == 'remote'), workplace=loc_wp)
 
+            # ── Determine keyword list for non-LinkedIn sources ───────────────
+            bd_keywords = [
+                "react developer", "full stack developer", "software engineer",
+                "nodejs developer", "next.js developer", "javascript developer",
+            ]
+
+            # ── Parallel multi-source fetch ───────────────────────────────────
+            all_raw_candidates = []
+            import threading
+            raw_lock = threading.Lock()
+
+            def _collect(fut_result):
+                """Thread-safe collector for results from any source."""
+                try:
+                    items = fut_result.result()
+                    if items:
+                        with raw_lock:
+                            all_raw_candidates.extend(items)
+                except Exception as e:
+                    print(f"     [Source fetch error]: {e}")
+
+            with ThreadPoolExecutor(max_workers=8) as pool:
+                futures = []
+
+                # LinkedIn always runs for both local and worldwide
+                futures.append(pool.submit(
+                    fetch_linkedin_playwright_jobs, loc_queries,
+                    timeframe, is_worldwide, loc_wp
+                ))
+
+                if is_worldwide:
+                    # ── Remote / Worldwide additional sources ─────────────────
+                    futures.append(pool.submit(fetch_remotive_jobs, max_hours))
+                    futures.append(pool.submit(fetch_jobicy_jobs, "react", max_hours))
+                    futures.append(pool.submit(fetch_jobicy_jobs, "javascript", max_hours))
+                    futures.append(pool.submit(fetch_remoteok_jobs, "javascript", max_hours))
+                    futures.append(pool.submit(fetch_remoteok_jobs, "react", max_hours))
+                    futures.append(pool.submit(fetch_arbeitnow_jobs, max_hours))
+                    futures.append(pool.submit(fetch_weworkremotely_jobs, max_hours))
+                else:
+                    # ── Bangladesh / local additional sources ─────────────────
+                    futures.append(pool.submit(fetch_bdjobs_jobs, bd_keywords, max_hours))
+                    futures.append(pool.submit(fetch_indeed_bd_jobs, bd_keywords[:3], max_hours))
+
+                for fut in as_completed(futures):
+                    _collect(fut)
+
+            print(f">> Combined {len(all_raw_candidates)} raw candidates from all sources for '{loc_name}'")
+
+            # ── Dedup across all sources and apply quality filters ─────────────
             raw_target_jobs = []
             target_seen = set()
-            for item in raw_candidates:
+            for item in all_raw_candidates:
                 if is_within_timeframe(item.get("date_posted"), max_hours=max_hours) and is_tech_job(item.get("title", ""), item.get("description", "")):
                     u_key, t_key = normalize_dedup(item)
                     if (not u_key or u_key not in target_seen) and t_key not in target_seen:
@@ -429,7 +479,13 @@ def search_jobs():
 
             target_jobs = []
             with ThreadPoolExecutor(max_workers=6) as executor:
-                enriched_futs = [executor.submit(enrich_linkedin_job, j) for j in to_enrich]
+                def _enrich_single(j):
+                    src_name = j.get("source") or "LinkedIn"
+                    if "linkedin" in str(src_name).lower():
+                        return enrich_linkedin_job(j)
+                    return j
+
+                enriched_futs = [executor.submit(_enrich_single, j) for j in to_enrich]
                 for fut in as_completed(enriched_futs):
                     try:
                         job = fut.result()
@@ -469,6 +525,14 @@ def search_jobs():
                         else:
                             loc_display = raw_loc or loc_name
 
+                        job_src = job.get("source") or "LinkedIn"
+                        if "linkedin" in str(job_src).lower():
+                            job_link = normalize_linkedin_url(job.get("link"), job.get("job_id"))
+                            final_source = "LinkedIn"
+                        else:
+                            job_link = job.get("link") or "#"
+                            final_source = job_src
+
                         target_jobs.append({
                             "title": job["title"],
                             "company": job["company"],
@@ -478,9 +542,9 @@ def search_jobs():
                             "reason": reason,
                             "remote_status": remote_st,
                             "experience": exp,
-                            "link": normalize_linkedin_url(job.get("link"), job.get("job_id")),
+                            "link": job_link,
                             "job_id": job.get("job_id", ""),
-                            "source": f"LinkedIn ({loc_name})",
+                            "source": final_source,
                             "target_location": loc_name,
                             "workplace_filter": loc_wp,
                         })
@@ -524,6 +588,14 @@ def search_jobs():
                 else:
                     loc_display = raw_loc or loc_name
 
+                job_src = job.get("source") or "LinkedIn"
+                if "linkedin" in str(job_src).lower():
+                    job_link = normalize_linkedin_url(job.get("link"), job.get("job_id"))
+                    final_source = "LinkedIn"
+                else:
+                    job_link = job.get("link") or "#"
+                    final_source = job_src
+
                 target_jobs.append({
                     "title": job["title"],
                     "company": job["company"],
@@ -533,9 +605,9 @@ def search_jobs():
                     "reason": reason,
                     "remote_status": remote_st,
                     "experience": exp,
-                    "link": normalize_linkedin_url(job.get("link"), job.get("job_id")),
+                    "link": job_link,
                     "job_id": job.get("job_id", ""),
-                    "source": f"LinkedIn ({loc_name})",
+                    "source": final_source,
                     "target_location": loc_name,
                     "workplace_filter": loc_wp,
                 })

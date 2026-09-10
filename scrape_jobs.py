@@ -82,7 +82,7 @@ def is_within_timeframe(date_val, max_hours=192):
     date_str = str(date_val).strip()
     date_lower = date_str.lower()
 
-    if any(kw in date_lower for kw in ["just now", "minute", "min", "sec", "second", "today", "yesterday"]):
+    if any(kw in date_lower for kw in ["active", "deadline", "open", "just now", "minute", "min", "sec", "second", "today", "yesterday"]):
         return True
     
     if "hour" in date_lower or "hr" in date_lower:
@@ -124,7 +124,7 @@ def is_within_timeframe(date_val, max_hours=192):
             now = datetime.now(timezone.utc)
             diff_days = (now.date() - dt.date()).days
             max_days = int(max_hours / 24) + 1
-            return 0 <= diff_days <= max_days
+            return -45 <= diff_days <= max_days
         except Exception:
             return True
 
@@ -135,7 +135,7 @@ def is_within_timeframe(date_val, max_hours=192):
             dt = dt.replace(tzinfo=timezone.utc)
         now = datetime.now(timezone.utc)
         diff_hours = (now - dt).total_seconds() / 3600
-        return 0 <= diff_hours <= max_hours
+        return -1080 <= diff_hours <= max_hours  # Allow up to 45 days for future deadlines
     except Exception:
         return True
 
@@ -424,14 +424,17 @@ def normalize_linkedin_url(link, job_id=""):
 
 
 async def _crawl_linkedin_crawlee(urls, is_remote=False):
-    """Internal Crawlee PlaywrightCrawler worker with controlled concurrency to prevent 429s."""
+    """Internal Crawlee PlaywrightCrawler worker with controlled concurrency to prevent 429s.
+
+    FIX: Increased page wait from 600ms to 1500ms and added explicit first-card selector
+    wait so dynamically rendered job cards are not missed on slow LinkedIn responses.
+    """
     from datetime import timedelta
     from crawlee import ConcurrencySettings
     from crawlee.crawlers import PlaywrightCrawler, PlaywrightCrawlingContext
     from crawlee.storage_clients import MemoryStorageClient
 
-    jobs = []
-    seen_ids = set()
+    raw_jobs = []  # Collect all cards first, dedup after
     storage = MemoryStorageClient()
     crawler = PlaywrightCrawler(
         storage_client=storage,
@@ -440,13 +443,21 @@ async def _crawl_linkedin_crawlee(urls, is_remote=False):
         max_request_retries=1,
         headless=True,
         browser_type="chromium",
-        request_handler_timeout=timedelta(seconds=25)
+        request_handler_timeout=timedelta(seconds=35)
     )
 
     @crawler.router.default_handler
     async def request_handler(context: PlaywrightCrawlingContext):
         page = context.page
-        await page.wait_for_timeout(600)
+        # Wait for first card to appear, then an extra buffer for the rest
+        try:
+            await page.wait_for_selector(
+                "div.base-card, ul.jobs-search__results-list > li",
+                timeout=10000
+            )
+        except Exception:
+            pass
+        await page.wait_for_timeout(1500)
         cards = await page.locator("div.base-card, ul.jobs-search__results-list > li").all()
         for card in cards:
             title_el = card.locator("h3.base-search-card__title, h3")
@@ -463,7 +474,11 @@ async def _crawl_linkedin_crawlee(urls, is_remote=False):
             loc = (await loc_el.first.inner_text()).strip() if await loc_el.count() > 0 else ("Worldwide (Remote)" if is_remote else "Bangladesh")
 
             time_el = card.locator("time")
-            date_raw = (await time_el.first.get_attribute("datetime") or await time_el.first.inner_text()) if await time_el.count() > 0 else ""
+            date_raw = ""
+            if await time_el.count() > 0:
+                date_raw = await time_el.first.get_attribute("datetime") or ""
+                if not date_raw:
+                    date_raw = (await time_el.first.inner_text()).strip()
 
             link_el = card.locator("a.base-card__full-link, a")
             href = (await link_el.first.get_attribute("href")) if await link_el.count() > 0 else ""
@@ -473,12 +488,7 @@ async def _crawl_linkedin_crawlee(urls, is_remote=False):
             job_id = m.group(1) if m else ""
             canonical_link = normalize_linkedin_url(href, job_id)
 
-            if job_id and job_id in seen_ids:
-                continue
-            if job_id:
-                seen_ids.add(job_id)
-
-            jobs.append({
+            raw_jobs.append({
                 "title": title,
                 "company": comp,
                 "location": loc,
@@ -491,14 +501,39 @@ async def _crawl_linkedin_crawlee(urls, is_remote=False):
             })
 
     await crawler.run(urls)
+
+    # Dedup after all pages processed (Crawlee runs sequentially so no race, but
+    # the same job can appear across multiple query URL pages)
+    jobs = []
+    seen_ids: set = set()
+    seen_title_comp: set = set()
+    for job in raw_jobs:
+        job_id = job.get("job_id", "")
+        title_clean = re.sub(r'[^a-z0-9]', '', job.get("title", "").lower())[:30]
+        comp_clean = re.sub(r'[^a-z0-9]', '', job.get("company", "").lower())[:20]
+        t_key = f"{title_clean}|{comp_clean}"
+        if job_id and job_id in seen_ids:
+            continue
+        if t_key in seen_title_comp:
+            continue
+        if job_id:
+            seen_ids.add(job_id)
+        seen_title_comp.add(t_key)
+        jobs.append(job)
+
     return jobs
 
 
 async def _crawl_linkedin_batch(urls, is_remote=False):
-    """Internal async Playwright worker with concurrency semaphore for scraping multiple feeds smoothly."""
+    """Internal async Playwright worker with concurrency semaphore for scraping multiple feeds smoothly.
+
+    FIX: Each page now collects into its own local list to avoid shared seen_ids race
+    conditions between concurrent async tasks. Dedup is merged once after all tasks
+    finish, making it safe under asyncio interleaving.
+    FIX: Playwright wait increased to 1500ms + explicit first-card wait so dynamically
+    rendered job cards are not missed on slower LinkedIn responses.
+    """
     from playwright.async_api import async_playwright
-    jobs = []
-    seen_ids = set()
     sem = asyncio.Semaphore(2)
 
     try:
@@ -510,11 +545,22 @@ async def _crawl_linkedin_batch(urls, is_remote=False):
             )
 
             async def scrape_single_url(target_url):
+                """Returns a list of raw job dicts for this URL (no global state mutated)."""
+                page_jobs = []
                 async with sem:
                     page = await context.new_page()
                     try:
-                        await page.goto(target_url, wait_until="domcontentloaded", timeout=18000)
-                        await page.wait_for_timeout(800)
+                        await page.goto(target_url, wait_until="domcontentloaded", timeout=25000)
+                        # Wait longer and explicitly wait for first card to appear so dynamic
+                        # LinkedIn results aren't missed on slow connections.
+                        try:
+                            await page.wait_for_selector(
+                                "div.base-card, ul.jobs-search__results-list > li",
+                                timeout=8000
+                            )
+                        except Exception:
+                            pass  # No cards appeared — page_jobs stays empty, that's fine
+                        await page.wait_for_timeout(1500)
                         cards = await page.locator("div.base-card, ul.jobs-search__results-list > li").all()
                         for card in cards:
                             title_el = card.locator("h3.base-search-card__title, h3")
@@ -531,7 +577,11 @@ async def _crawl_linkedin_batch(urls, is_remote=False):
                             loc = (await loc_el.first.inner_text()).strip() if await loc_el.count() > 0 else ("Worldwide (Remote)" if is_remote else "Bangladesh")
 
                             time_el = card.locator("time")
-                            date_raw = (await time_el.first.get_attribute("datetime") or await time_el.first.inner_text()) if await time_el.count() > 0 else ""
+                            date_raw = ""
+                            if await time_el.count() > 0:
+                                date_raw = await time_el.first.get_attribute("datetime") or ""
+                                if not date_raw:
+                                    date_raw = (await time_el.first.inner_text()).strip()
 
                             link_el = card.locator("a.base-card__full-link, a")
                             href = (await link_el.first.get_attribute("href")) if await link_el.count() > 0 else ""
@@ -541,12 +591,7 @@ async def _crawl_linkedin_batch(urls, is_remote=False):
                             job_id = m.group(1) if m else ""
                             canonical_link = normalize_linkedin_url(href, job_id)
 
-                            if job_id and job_id in seen_ids:
-                                continue
-                            if job_id:
-                                seen_ids.add(job_id)
-
-                            jobs.append({
+                            page_jobs.append({
                                 "title": title,
                                 "company": comp,
                                 "location": loc,
@@ -561,17 +606,72 @@ async def _crawl_linkedin_batch(urls, is_remote=False):
                         print(f"     [Playwright] error scraping {target_url}: {e}")
                     finally:
                         await page.close()
+                return page_jobs
 
-            await asyncio.gather(*[scrape_single_url(u) for u in urls])
+            # Gather all per-page results concurrently
+            per_page_results = await asyncio.gather(*[scrape_single_url(u) for u in urls])
             await browser.close()
+
+        # Merge with dedup AFTER all async tasks finish (no race condition)
+        jobs = []
+        seen_ids: set = set()
+        seen_title_comp: set = set()
+        for page_jobs in per_page_results:
+            for job in page_jobs:
+                job_id = job.get("job_id", "")
+                title_clean = re.sub(r'[^a-z0-9]', '', job.get("title", "").lower())[:30]
+                comp_clean = re.sub(r'[^a-z0-9]', '', job.get("company", "").lower())[:20]
+                t_key = f"{title_clean}|{comp_clean}"
+                if job_id and job_id in seen_ids:
+                    continue
+                if t_key in seen_title_comp:
+                    continue
+                if job_id:
+                    seen_ids.add(job_id)
+                seen_title_comp.add(t_key)
+                jobs.append(job)
+
+        return jobs
+
     except Exception as e:
         print(f"     [Playwright] browser execution error: {e}")
+        return []
 
-    return jobs
+
+def _dedup_jobs(jobs):
+    """Deduplicate a list of job dicts by job_id and (title, company) key.
+    
+    FIX: Centralised dedup helper used by all strategies in
+    fetch_linkedin_playwright_jobs so no matter which strategy succeeds
+    (or if the fallback merges multiple batches), duplicates are removed
+    before the caller receives results.
+    """
+    seen_ids: set = set()
+    seen_title_comp: set = set()
+    unique = []
+    for job in jobs:
+        job_id = job.get("job_id", "")
+        title_clean = re.sub(r'[^a-z0-9]', '', job.get("title", "").lower())[:30]
+        comp_clean = re.sub(r'[^a-z0-9]', '', job.get("company", "").lower())[:20]
+        t_key = f"{title_clean}|{comp_clean}"
+        if job_id and job_id in seen_ids:
+            continue
+        if t_key in seen_title_comp:
+            continue
+        if job_id:
+            seen_ids.add(job_id)
+        seen_title_comp.add(t_key)
+        unique.append(job)
+    return unique
 
 
 def fetch_linkedin_playwright_jobs(queries, timeframe="week", is_remote=False, workplace="all"):
-    """Fetch LinkedIn jobs using Crawlee and Playwright scraper engine with automatic fallback."""
+    """Fetch LinkedIn jobs using Crawlee and Playwright scraper engine with automatic fallback.
+
+    FIX: A final _dedup_jobs() pass is applied to the results of every strategy
+    before returning, eliminating duplicates that can appear when the same job
+    is listed under multiple search query URLs.
+    """
     import urllib.parse
     import asyncio
 
@@ -609,6 +709,8 @@ def fetch_linkedin_playwright_jobs(queries, timeframe="week", is_remote=False, w
     # Strategy 1: Direct Playwright parallel async worker with Semaphore(2)
     try:
         jobs = asyncio.run(_crawl_linkedin_batch(urls, is_remote=is_remote_flag))
+        # _crawl_linkedin_batch now dedupes internally, but apply final pass for safety
+        jobs = _dedup_jobs(jobs)
         if jobs and len(jobs) >= 5:
             print(f">> [Playwright Engine] Successfully extracted {len(jobs)} live jobs from LinkedIn")
             return jobs
@@ -618,6 +720,7 @@ def fetch_linkedin_playwright_jobs(queries, timeframe="week", is_remote=False, w
     # Strategy 2: Crawlee PlaywrightCrawler with ConcurrencySettings
     try:
         jobs = asyncio.run(_crawl_linkedin_crawlee(urls, is_remote=is_remote_flag))
+        jobs = _dedup_jobs(jobs)
         if jobs and len(jobs) >= 5:
             print(f">> [Crawlee Engine] Successfully extracted {len(jobs)} live jobs from LinkedIn")
             return jobs
@@ -632,7 +735,8 @@ def fetch_linkedin_playwright_jobs(queries, timeframe="week", is_remote=False, w
         for b in batch:
             b["link"] = normalize_linkedin_url(b.get("link"), b.get("job_id"))
             fallback_jobs.append(b)
-    return fallback_jobs
+    # Dedup the combined fallback results before returning
+    return _dedup_jobs(fallback_jobs)
 
 
 def fetch_linkedin_guest_jobs(keyword, location, timeframe="week", limit=25, workplace="all"):
@@ -825,27 +929,53 @@ def fetch_remoteok_jobs(tag="javascript", max_hours=192):
     jobs = []
     try:
         print(f"  >> [RemoteOK] Fetching remote '{tag}' developer jobs...")
-        url = f"https://remoteok.com/api?tag={tag}"
-        resp = requests.get(url, headers=HEADERS, timeout=15)
-        if resp.status_code == 200:
-            data = resp.json()
-            for item in data:
-                if isinstance(item, dict) and item.get("position"):
-                    raw_date = item.get("date") or item.get("epoch")
-                    
-                    if not is_within_timeframe(raw_date, max_hours=max_hours):
-                        continue
+        urls = [f"https://remoteok.com/api?tag={tag}"] if tag else []
+        urls.append("https://remoteok.com/api")
 
-                    jobs.append({
-                        "title": item.get("position", "N/A"),
-                        "company": item.get("company", "N/A"),
-                        "location": item.get("location") or "Worldwide (Remote)",
-                        "date_posted": format_date_str(raw_date),
-                        "description": item.get("description", ""),
-                        "link": item.get("url", ""),
-                        "source": "RemoteOK",
-                        "is_remote": True,
-                    })
+        seen_slugs = set()
+        for u in urls:
+            try:
+                resp = requests.get(u, headers=HEADERS, timeout=12)
+                if resp.status_code != 200:
+                    continue
+                data = resp.json()
+                for item in data:
+                    if isinstance(item, dict) and item.get("position"):
+                        slug = item.get("slug") or item.get("id") or item.get("url")
+                        if slug and slug in seen_slugs:
+                            continue
+                        if slug:
+                            seen_slugs.add(slug)
+
+                        raw_date = item.get("date") or item.get("epoch")
+                        if not is_within_timeframe(raw_date, max_hours=max_hours):
+                            continue
+
+                        title = item.get("position", "N/A")
+                        desc = item.get("description", "")
+                        tags_str = " ".join(item.get("tags", []))
+                        if not is_tech_job(title, f"{desc} {tags_str}"):
+                            continue
+
+                        link = item.get("url", "")
+                        if link and not link.startswith("http"):
+                            link = f"https://remoteok.com{link}"
+
+                        jobs.append({
+                            "title": title,
+                            "company": item.get("company", "N/A"),
+                            "location": item.get("location") or "Worldwide (Remote)",
+                            "date_posted": format_date_str(raw_date),
+                            "description": f"{title} at {item.get('company', '')}. {desc[:500]}",
+                            "link": link or "https://remoteok.com",
+                            "source": "RemoteOK",
+                            "is_remote": True,
+                        })
+                if jobs:
+                    break
+            except Exception:
+                continue
+
         print(f"     [RemoteOK] '{tag}': Found {len(jobs)} jobs")
     except Exception as e:
         print(f"     [RemoteOK] error for '{tag}': {e}")
@@ -886,6 +1016,359 @@ def fetch_arbeitnow_jobs(max_hours=192):
         print(f"     [Arbeitnow] Found {len(jobs)} jobs matching timeframe")
     except Exception as e:
         print(f"     [Arbeitnow] error: {e}")
+    return jobs
+
+
+# ── SOURCE 6: We Work Remotely RSS ──────────────────────────────────
+def fetch_weworkremotely_jobs(max_hours=192):
+    """Fetch remote developer jobs from We Work Remotely RSS feeds.
+
+    WWR publishes well-structured RSS feeds for different programming
+    categories with full job descriptions, dates, and direct links.
+    """
+    import xml.etree.ElementTree as ET
+    jobs = []
+    seen_links = set()
+    wwr_feeds = [
+        ("Full Stack", "https://weworkremotely.com/categories/remote-full-stack-programming-jobs.rss"),
+        ("Front End", "https://weworkremotely.com/categories/remote-front-end-programming-jobs.rss"),
+        ("Back End", "https://weworkremotely.com/categories/remote-back-end-programming-jobs.rss"),
+        ("All Programming", "https://weworkremotely.com/categories/remote-programming-jobs.rss"),
+        ("All Remote", "https://weworkremotely.com/remote-jobs.rss"),
+    ]
+
+    try:
+        print("  >> [WeWorkRemotely] Fetching remote programming jobs from RSS feeds...")
+        for cat_name, feed_url in wwr_feeds:
+            try:
+                resp = requests.get(feed_url, headers=HEADERS, timeout=12)
+                if resp.status_code != 200:
+                    continue
+
+                root = ET.fromstring(resp.content)
+                items = root.findall(".//item")
+                for item in items:
+                    raw_title = (item.findtext("title") or "").strip()
+                    link = (item.findtext("link") or item.findtext("guid") or "").strip()
+                    pub_date = (item.findtext("pubDate") or "").strip()
+                    region = (item.findtext("region") or "Anywhere in the World").strip()
+                    description_raw = (item.findtext("description") or "").strip()
+
+                    if not raw_title or not link or link in seen_links:
+                        continue
+
+                    if not is_within_timeframe(pub_date, max_hours=max_hours):
+                        continue
+
+                    if ": " in raw_title:
+                        parts = raw_title.split(": ", 1)
+                        company = parts[0].strip()
+                        title = parts[1].strip()
+                    else:
+                        company = "N/A"
+                        title = raw_title
+
+                    clean_desc = re.sub(r'<[^>]+>', ' ', description_raw)
+                    clean_desc = re.sub(r'&[a-z]+;', ' ', clean_desc)
+                    clean_desc = re.sub(r'\s+', ' ', clean_desc).strip()
+
+                    if not is_tech_job(title, clean_desc):
+                        continue
+
+                    seen_links.add(link)
+                    jobs.append({
+                        "title": title,
+                        "company": company,
+                        "location": region or "Worldwide (Remote)",
+                        "date_posted": format_date_str(pub_date),
+                        "description": f"{title} at {company}. {clean_desc[:600]}",
+                        "link": link,
+                        "source": "WeWorkRemotely",
+                        "is_remote": True,
+                    })
+            except Exception:
+                continue
+
+        print(f"     [WeWorkRemotely] Found {len(jobs)} matching jobs across feeds")
+    except Exception as e:
+        print(f"     [WeWorkRemotely] error: {e}")
+    return jobs
+
+
+# ── SOURCE 7: BDjobs Playwright Scraper ─────────────────────────────
+async def _crawl_bdjobs_async(keywords):
+    """Async Playwright worker to scrape BDjobs search results from their modern portal."""
+    from playwright.async_api import async_playwright
+    import urllib.parse
+    all_jobs = []
+
+    try:
+        async with async_playwright() as p:
+            browser = await p.chromium.launch(headless=True)
+            context = await browser.new_context(
+                user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+                locale="en-US",
+                extra_http_headers={"Accept-Language": "en-US,en;q=0.9"}
+            )
+            page = await context.new_page()
+
+            for kw in keywords[:4]:
+                try:
+                    search_url = f"https://bdjobs.com/h/jobs?txtsearch={urllib.parse.quote(kw)}"
+                    await page.goto(search_url, wait_until="domcontentloaded", timeout=25000)
+
+                    try:
+                        await page.wait_for_selector("a[href*='/h/details/']", timeout=10000)
+                    except Exception:
+                        pass
+                    await page.wait_for_timeout(1500)
+
+                    html = await page.content()
+                    soup = bs4.BeautifulSoup(html, "html.parser")
+
+                    detail_links = soup.find_all("a", href=lambda h: h and "/h/details/" in h)
+                    seen_page_urls = set()
+
+                    for a in detail_links:
+                        raw_href = a["href"]
+                        if raw_href in seen_page_urls:
+                            continue
+                        seen_page_urls.add(raw_href)
+
+                        href = f"https://bdjobs.com{raw_href}" if raw_href.startswith("/") else raw_href
+
+                        paragraphs = a.find_all("p")
+                        raw_title = paragraphs[0].get_text(strip=True) if len(paragraphs) > 0 else ""
+                        if not raw_title or len(raw_title) < 3:
+                            continue
+
+                        # Clean camelCase glued words: "Full StackDeveloper" -> "Full Stack Developer"
+                        title = re.sub(r'([a-z])([A-Z])', r'\1 \2', raw_title).strip()
+                        company = paragraphs[1].get_text(strip=True) if len(paragraphs) > 1 else "Confidential"
+
+                        # Location
+                        location = "Dhaka, Bangladesh"
+                        for p_tag in paragraphs[2:]:
+                            t = p_tag.get_text(strip=True)
+                            if any(c in t.lower() for c in ["dhaka", "chittagong", "sylhet", "mirpur", "gulshan", "banani", "uttara", "bangladesh", "mohakhali", "dhanmondi", "tejgaon", "khulna", "rajshahi", "remote", "anywhere"]):
+                                location = t
+                                break
+
+                        # Experience
+                        exp_el = a.find(class_="exp-test")
+                        experience = exp_el.get_text(strip=True) if exp_el else "1-3 yrs"
+
+                        all_jobs.append({
+                            "title": title,
+                            "company": company,
+                            "location": location,
+                            "date_posted": "Active",
+                            "description": f"{title} at {company} in {location}. Experience: {experience}",
+                            "link": href,
+                            "source": "BDjobs",
+                            "experience": experience,
+                            "is_remote": "remote" in location.lower(),
+                        })
+
+                except Exception as e:
+                    print(f"     [BDjobs] error scraping '{kw}': {e}")
+                await page.wait_for_timeout(400)
+
+            await browser.close()
+    except Exception as e:
+        print(f"     [BDjobs] browser error: {e}")
+
+    return all_jobs
+
+
+def fetch_bdjobs_jobs(keywords=None, max_hours=192):
+    """Fetch Bangladesh tech jobs from BDjobs using Playwright.
+
+    BDjobs is Bangladesh's largest job board and a primary source for
+    local tech roles. Requires Playwright because the site uses JS rendering.
+    """
+    import asyncio
+    if keywords is None:
+        keywords = ["react developer", "full stack developer", "software engineer", "nodejs developer"]
+
+    if sys.platform.startswith("win"):
+        try:
+            asyncio.set_event_loop_policy(asyncio.WindowsProactorEventLoopPolicy())
+        except Exception:
+            pass
+
+    print(f"  >> [BDjobs] Scraping Bangladesh jobs for {len(keywords)} keywords...")
+    try:
+        raw_jobs = asyncio.run(_crawl_bdjobs_async(keywords))
+    except Exception as e:
+        print(f"     [BDjobs] asyncio error: {e}")
+        return []
+
+    # Filter, dedup, and return
+    jobs = []
+    seen_titles = set()
+    for job in raw_jobs:
+        title_key = re.sub(r'[^a-z0-9]', '', job.get("title", "").lower())[:30]
+        comp_key = re.sub(r'[^a-z0-9]', '', job.get("company", "").lower())[:15]
+        key = f"{title_key}|{comp_key}"
+        if key in seen_titles:
+            continue
+        seen_titles.add(key)
+
+        if not is_tech_job(job.get("title", ""), job.get("description", "")):
+            continue
+
+        jobs.append(job)
+
+    print(f"     [BDjobs] Found {len(jobs)} unique tech jobs")
+    return jobs
+
+
+# ── SOURCE 8: Indeed Bangladesh (Playwright, best-effort) ────────────
+async def _crawl_indeed_async(keywords):
+    """Async Playwright worker for Indeed Bangladesh.
+
+    Indeed blocks plain HTTP requests, but Playwright with a realistic
+    browser profile usually succeeds. Runs as best-effort — returns
+    empty list gracefully if blocked.
+    """
+    from playwright.async_api import async_playwright
+    import urllib.parse
+    all_jobs = []
+
+    try:
+        async with async_playwright() as p:
+            browser = await p.chromium.launch(headless=True)
+            context = await browser.new_context(
+                user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+                locale="en-US",
+                viewport={"width": 1280, "height": 720},
+            )
+            page = await context.new_page()
+
+            for kw in keywords[:3]:
+                try:
+                    url = f"https://www.indeed.com/jobs?q={urllib.parse.quote(kw)}&l=Bangladesh"
+                    await page.goto(url, wait_until="domcontentloaded", timeout=25000)
+                    try:
+                        await page.wait_for_selector("div.job_seen_beacon, .jobsearch-ResultsList > li, div.cardOutline", timeout=10000)
+                    except Exception:
+                        pass
+                    await page.wait_for_timeout(2000)
+
+                    html = await page.content()
+                    page_title = (await page.title() or "").lower()
+                    if any(w in page_title for w in ["access denied", "security check", "challenge", "cloudflare"]) or len(html) < 2000:
+                        print(f"     [Indeed BD] Security checkpoint detected for '{kw}', skipping")
+                        continue
+
+                    soup = bs4.BeautifulSoup(html, "html.parser")
+                    cards = (
+                        soup.select("div.job_seen_beacon") or
+                        soup.select("div.cardOutline") or
+                        soup.select(".jobsearch-ResultsList > li")
+                    )
+
+                    for card in cards:
+                        title_el = (
+                            card.select_one("h2.jobTitle span[title]") or
+                            card.select_one("h2.jobTitle a span") or
+                            card.select_one("h2.jobTitle span") or
+                            card.select_one("a[data-jk]")
+                        )
+                        if not title_el:
+                            continue
+                        title = title_el.get_text(strip=True)
+                        if not title:
+                            continue
+
+                        comp_el = card.select_one("[data-testid='company-name'], span.companyName")
+                        company = comp_el.get_text(strip=True) if comp_el else "Confidential"
+
+                        loc_el = card.select_one("[data-testid='text-location'], div.companyLocation")
+                        location = loc_el.get_text(strip=True) if loc_el else "Bangladesh"
+
+                        link_el = card.select_one("a[data-jk], h2.jobTitle a")
+                        jk = (link_el.get("data-jk") or "").strip() if link_el else ""
+                        raw_href = link_el.get("href", "") if link_el else ""
+                        if not jk and raw_href:
+                            m_jk = re.search(r'jk=([a-f0-9]+)', raw_href)
+                            if m_jk:
+                                jk = m_jk.group(1)
+
+                        if jk:
+                            href = f"https://www.indeed.com/viewjob?jk={jk}"
+                        elif raw_href and raw_href.startswith("http"):
+                            href = raw_href
+                        elif raw_href:
+                            href = f"https://www.indeed.com{raw_href}"
+                        else:
+                            href = "https://www.indeed.com"
+
+                        date_el = card.select_one("span.date, [data-testid='myJobsStateDate']")
+                        date_raw = date_el.get_text(strip=True) if date_el else "Active"
+
+                        all_jobs.append({
+                            "title": title,
+                            "company": company,
+                            "location": location or "Bangladesh",
+                            "date_posted": date_raw,
+                            "description": f"{title} at {company} in {location}",
+                            "link": href,
+                            "source": "Indeed",
+                            "is_remote": "remote" in location.lower() or "hybrid" in location.lower(),
+                        })
+                except Exception as e:
+                    print(f"     [Indeed BD] error for '{kw}': {e}")
+                await page.wait_for_timeout(600)
+
+            await browser.close()
+    except Exception as e:
+        print(f"     [Indeed BD] browser error: {e}")
+
+    return all_jobs
+
+
+def fetch_indeed_bd_jobs(keywords=None, max_hours=192):
+    """Fetch Bangladesh jobs from Indeed (Playwright, best-effort).
+
+    Indeed aggressively blocks scrapers. This function tries with a
+    realistic Playwright session and returns an empty list gracefully
+    if blocked — so it never breaks the main search flow.
+    """
+    import asyncio
+    if keywords is None:
+        keywords = ["react developer", "full stack developer", "software engineer"]
+
+    if sys.platform.startswith("win"):
+        try:
+            asyncio.set_event_loop_policy(asyncio.WindowsProactorEventLoopPolicy())
+        except Exception:
+            pass
+
+    print(f"  >> [Indeed BD] Attempting scrape for {len(keywords)} keywords...")
+    try:
+        raw_jobs = asyncio.run(_crawl_indeed_async(keywords))
+    except Exception as e:
+        print(f"     [Indeed BD] asyncio error: {e}")
+        return []
+
+    jobs = []
+    seen = set()
+    for job in raw_jobs:
+        title_key = re.sub(r'[^a-z0-9]', '', job.get("title", "").lower())[:30]
+        comp_key = re.sub(r'[^a-z0-9]', '', job.get("company", "").lower())[:15]
+        key = f"{title_key}|{comp_key}"
+        if key in seen:
+            continue
+        seen.add(key)
+        if not is_tech_job(job.get("title", ""), job.get("description", "")):
+            continue
+        if not is_within_timeframe(job.get("date_posted", ""), max_hours=max_hours):
+            continue
+        jobs.append(job)
+
+    print(f"     [Indeed BD] Found {len(jobs)} tech jobs")
     return jobs
 
 
@@ -976,6 +1459,13 @@ def run_job_search(timeframe="week", days=7, top_count=15):
         ("JavaScript Developer", "Bangladesh"),
     ]
 
+    # FIX: Use a threading.Lock to protect seen_keys from concurrent mutation by
+    # ThreadPoolExecutor workers. Without the lock, multiple threads can pass the
+    # "key not in seen_keys" check simultaneously, causing duplicates or missed
+    # jobs depending on scheduling order.
+    import threading
+    seen_keys_lock = threading.Lock()
+
     with ThreadPoolExecutor(max_workers=6) as executor:
         futures = [executor.submit(fetch_linkedin_jobs, kw, loc, timeframe, 30) for kw, loc in li_bd_queries]
         for fut in as_completed(futures):
@@ -984,10 +1474,11 @@ def run_job_search(timeframe="week", days=7, top_count=15):
                 for item in items:
                     if is_within_timeframe(item.get("date_posted"), max_hours=max_hours) and is_tech_job(item.get("title", "")):
                         u_key, t_key = normalize_dedup(item)
-                        if (not u_key or u_key not in seen_keys) and t_key not in seen_keys:
-                            if u_key: seen_keys.add(u_key)
-                            seen_keys.add(t_key)
-                            raw_bd_jobs.append(item)
+                        with seen_keys_lock:
+                            if (not u_key or u_key not in seen_keys) and t_key not in seen_keys:
+                                if u_key: seen_keys.add(u_key)
+                                seen_keys.add(t_key)
+                                raw_bd_jobs.append(item)
             except Exception as e:
                 print(f"Error fetching BD job batch: {e}")
 
@@ -1078,7 +1569,10 @@ def run_job_search(timeframe="week", days=7, top_count=15):
                 job = fut.result()
                 score, reason = score_job(job["title"], job.get("description", ""), job.get("company", ""))
                 exp = extract_experience(job["title"], job.get("description", ""))
-                remote_st = "Remote" if job.get("is_remote", True) else classify_remote(job["title"], job["location"], job.get("description", ""), source_is_remote=True)
+                # FIX: was source_is_remote=True (wrong kwarg, silently ignored) causing
+                # worldwide LinkedIn jobs without explicit "remote" text to be classified
+                # as Onsite and then wrongly filtered out by the workplace filter.
+                remote_st = "Remote" if job.get("is_remote", True) else classify_remote(job["title"], job["location"], job.get("description", ""), is_remote_source=True)
 
                 remote_jobs.append({
                     "title": job["title"],

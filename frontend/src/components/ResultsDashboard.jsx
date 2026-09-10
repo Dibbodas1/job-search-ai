@@ -28,14 +28,68 @@ function getRemoteType(status) {
   return { label: 'Onsite', class: 'badge-onsite' }
 }
 
-function getSourceMeta(source) {
-  const s = (source || '').toLowerCase()
-  if (s.includes('remote')) return { label: 'LinkedIn Remote', class: 'source-linkedin' }
-  if (source && source.startsWith('LinkedIn')) return { label: source, class: 'source-linkedin' }
-  return { label: source || 'LinkedIn', class: 'source-linkedin' }
+// ─── Source metadata: icon, color class, display label, site URL ───
+const SOURCE_META = {
+  linkedin: {
+    label: 'LinkedIn', icon: '💼', cls: 'source-linkedin',
+    url: 'linkedin.com', color: '#0a66c2'
+  },
+  remotive: {
+    label: 'Remotive', icon: '🌐', cls: 'source-remotive',
+    url: 'remotive.com', color: '#10b981'
+  },
+  jobicy: {
+    label: 'Jobicy', icon: '📋', cls: 'source-jobicy',
+    url: 'jobicy.com', color: '#f97316'
+  },
+  remoteok: {
+    label: 'RemoteOK', icon: '🟢', cls: 'source-remoteok',
+    url: 'remoteok.com', color: '#ec4899'
+  },
+  arbeitnow: {
+    label: 'Arbeitnow', icon: '⚡', cls: 'source-arbeitnow',
+    url: 'arbeitnow.com', color: '#8b5cf6'
+  },
+  weworkremotely: {
+    label: 'WeWorkRemotely', icon: '🏠', cls: 'source-wwr',
+    url: 'weworkremotely.com', color: '#14b8a6'
+  },
+  bdjobs: {
+    label: 'BDjobs', icon: '🇧🇩', cls: 'source-bdjobs',
+    url: 'bdjobs.com', color: '#f59e0b'
+  },
+  indeed: {
+    label: 'Indeed', icon: '🔍', cls: 'source-indeed',
+    url: 'indeed.com', color: '#003a9b'
+  },
 }
 
-export function formatJobLink(link, jobId) {
+function getSourceMeta(source) {
+  const s = (source || '').toLowerCase().replace(/[\s\-\.]/g, '')
+  if (s.includes('linkedin')) return SOURCE_META.linkedin
+  if (s.includes('remotive')) return SOURCE_META.remotive
+  if (s.includes('jobicy')) return SOURCE_META.jobicy
+  if (s.includes('remoteok')) return SOURCE_META.remoteok
+  if (s.includes('arbeitnow')) return SOURCE_META.arbeitnow
+  if (s.includes('weworkremotely') || s.includes('wwr')) return SOURCE_META.weworkremotely
+  if (s.includes('bdjobs')) return SOURCE_META.bdjobs
+  if (s.includes('indeed')) return SOURCE_META.indeed
+  return { label: source || 'Unknown', icon: '📌', cls: 'source-default', url: '', color: '#64748b' }
+}
+
+// Fix job apply links — only normalize to LinkedIn format when the source IS LinkedIn
+function formatJobLink(link, jobId, source) {
+  const srcLower = (source || '').toLowerCase()
+  const isLinkedIn = srcLower.includes('linkedin') || (!source && link && link.includes('linkedin.com'))
+
+  // Non-LinkedIn sources: use the link as-is
+  if (!isLinkedIn) {
+    if (link && (link.startsWith('http://') || link.startsWith('https://'))) return link
+    if (link && link.startsWith('/')) return `https://${link.slice(1)}`
+    return link || '#'
+  }
+
+  // LinkedIn: build canonical /jobs/view/<id>/ URL
   if (jobId && /^\d+$/.test(String(jobId).trim())) {
     return `https://www.linkedin.com/jobs/view/${String(jobId).trim()}/`
   }
@@ -47,6 +101,22 @@ export function formatJobLink(link, jobId) {
   if (s.startsWith('/')) return `https://www.linkedin.com${s}`
   return `https://${s}`
 }
+
+// All known source keys for the Sources panel
+const ALL_SOURCES_BD = [
+  { key: 'linkedin', ...SOURCE_META.linkedin },
+  { key: 'bdjobs', ...SOURCE_META.bdjobs },
+  { key: 'indeed', ...SOURCE_META.indeed },
+]
+const ALL_SOURCES_REMOTE = [
+  { key: 'linkedin', ...SOURCE_META.linkedin },
+  { key: 'remotive', ...SOURCE_META.remotive },
+  { key: 'jobicy', ...SOURCE_META.jobicy },
+  { key: 'remoteok', ...SOURCE_META.remoteok },
+  { key: 'arbeitnow', ...SOURCE_META.arbeitnow },
+  { key: 'weworkremotely', ...SOURCE_META.weworkremotely },
+]
+
 
 
 export default function ResultsDashboard({
@@ -198,6 +268,90 @@ export default function ResultsDashboard({
           </div>
         </div>
       )}
+
+      {/* ─── Source Breakdown Panel ──────────────────────────────────── */}
+      {allJobs.length > 0 && (() => {
+        // Count jobs per source
+        const srcCounts = {}
+        allJobs.forEach(j => {
+          const meta = getSourceMeta(j.source)
+          const key = meta.label
+          srcCounts[key] = (srcCounts[key] || 0) + 1
+        })
+        const entries = Object.entries(srcCounts).sort((a, b) => b[1] - a[1])
+        const total = allJobs.length
+
+        // Which source pools were searched?
+        const hasWorldwide = (results?.location_targets || []).some(t =>
+          (t.location || '').toLowerCase().includes('world') ||
+          (t.location || '').toLowerCase().includes('remote') ||
+          (t.location || '').toLowerCase().includes('global')
+        ) || (results?.remote_jobs?.length > 0)
+        const hasBD = (results?.location_targets || []).some(t =>
+          (t.location || '').toLowerCase().includes('bangladesh')
+        ) || (results?.bangladesh_jobs?.length > 0)
+        const activeSources = (hasWorldwide && hasBD)
+          ? [...ALL_SOURCES_BD, ...ALL_SOURCES_REMOTE].filter((v, i, a) => a.findIndex(x => x.key === v.key) === i)
+          : hasWorldwide
+            ? ALL_SOURCES_REMOTE
+            : hasBD
+              ? ALL_SOURCES_BD
+              : [...ALL_SOURCES_BD, ...ALL_SOURCES_REMOTE].filter((v, i, a) => a.findIndex(x => x.key === v.key) === i)
+
+        return (
+          <div className="sources-breakdown-panel">
+            <div className="sources-panel-header">
+              <span className="sources-panel-title">📡 Sources Searched</span>
+              <span className="sources-panel-sub">{entries.length} platform{entries.length !== 1 ? 's' : ''} returned results</span>
+            </div>
+
+            {/* Active source pills showing which platforms were queried */}
+            <div className="sources-scanned-row">
+              {activeSources.map(src => {
+                const count = srcCounts[src.label] || 0
+                const isActive = count > 0
+                return (
+                  <div
+                    key={src.key}
+                    className={`source-scan-pill ${isActive ? 'source-scan-active' : 'source-scan-pending'}`}
+                    title={`${src.label}: ${count} job${count !== 1 ? 's' : ''} found`}
+                  >
+                    <span className="source-scan-icon">{src.icon}</span>
+                    <span className="source-scan-name">{src.label}</span>
+                    {isActive && <span className="source-scan-count">{count}</span>}
+                    {!isActive && <span className="source-scan-dot" />}
+                  </div>
+                )
+              })}
+            </div>
+
+            {/* Bar chart showing job distribution per source */}
+            {entries.length > 1 && (
+              <div className="sources-bar-chart">
+                {entries.map(([label, count]) => {
+                  const meta = getSourceMeta(label)
+                  const pct = Math.round((count / total) * 100)
+                  return (
+                    <div key={label} className="source-bar-row">
+                      <span className="source-bar-label">
+                        <span className="source-bar-icon">{meta.icon}</span>
+                        <span>{meta.label}</span>
+                      </span>
+                      <div className="source-bar-track">
+                        <div
+                          className="source-bar-fill"
+                          style={{ width: `${pct}%`, background: meta.color }}
+                        />
+                      </div>
+                      <span className="source-bar-count">{count}</span>
+                    </div>
+                  )
+                })}
+              </div>
+            )}
+          </div>
+        )
+      })()}
 
       {/* ─── Metric Stat Cards ──────────────────────────────────────── */}
       {stats && (
@@ -480,11 +634,12 @@ export default function ResultsDashboard({
                   key={`${job.title}-${job.company}-${idx}`}
                   onClick={() => onSelectJob(job)}
                 >
-                  {/* Card Header */}
+                  {/* Card Header: source badge + remote badge + score */}
                   <div className="job-card-header">
                     <div className="job-card-meta-top">
-                      <span className={`badge-pill ${sourceMeta.class}`}>
-                        {sourceMeta.label}
+                      <span className={`badge-pill source-badge-rich ${sourceMeta.cls}`}>
+                        <span className="source-badge-icon">{sourceMeta.icon}</span>
+                        <span>{sourceMeta.label}</span>
                       </span>
                       <span className={`badge-pill ${remoteMeta.class}`}>
                         {remoteMeta.label}
@@ -549,7 +704,7 @@ export default function ResultsDashboard({
 
                     {(job.link || job.job_id) && (
                       <a
-                        href={formatJobLink(job.link, job.job_id)}
+                        href={formatJobLink(job.link, job.job_id, job.source)}
                         target="_blank"
                         rel="noopener noreferrer"
                         className="btn-card-apply"
@@ -641,14 +796,15 @@ export default function ResultsDashboard({
                         </span>
                       </td>
                       <td>
-                        <span className={`badge-pill ${sourceMeta.class}`}>
-                          {sourceMeta.label}
+                        <span className={`badge-pill source-badge-rich ${sourceMeta.cls}`}>
+                          <span className="source-badge-icon">{sourceMeta.icon}</span>
+                          <span>{sourceMeta.label}</span>
                         </span>
                       </td>
                       <td style={{ textAlign: 'right' }}>
                         {(job.link || job.job_id) && (
                           <a
-                            href={formatJobLink(job.link, job.job_id)}
+                            href={formatJobLink(job.link, job.job_id, job.source)}
                             target="_blank"
                             rel="noopener noreferrer"
                             className="table-apply-btn"
@@ -696,9 +852,11 @@ export default function ResultsDashboard({
       <div className="results-footer-info">
         <span>Timeframe: <strong>{timeframe}</strong></span>
         <span className="meta-bullet">·</span>
-        <span>Showing <strong>{displayedJobs.length}</strong> of <strong>{totalSelected}</strong> curated candidates</span>
+        <span>Showing <strong>{displayedJobs.length}</strong> of <strong>{totalSelected}</strong> curated matches</span>
         <span className="meta-bullet">·</span>
-        <span>Aggregated from <strong>{totalScraped}</strong> raw listings</span>
+        <span>Scanned <strong>{totalScraped}</strong> raw listings across{' '}
+          <strong>{[...new Set(allJobs.map(j => getSourceMeta(j.source).label))].length}</strong> platforms
+        </span>
       </div>
     </section>
   )

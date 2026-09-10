@@ -9,23 +9,16 @@ export default function SearchProgress({ timeframe, config, locations: propLocat
     { location: currentConfig.location || 'Bangladesh', workplace: currentConfig.workplaceType || 'all' }
   ]
 
-  const sources = []
-  locations.forEach((locItem, idx) => {
-    const loc = locItem.location || 'Target Location'
-    const wp = locItem.workplace || 'all'
-    const wpDesc = wp === 'all' ? 'All Workplace Modes' : `${wp.toUpperCase()} Roles`
-    sources.push({
-      id: `li-target-${idx}`,
-      name: `LinkedIn (${loc})`,
-      location: wpDesc,
-      color: COLOR_PALETTE[idx % COLOR_PALETTE.length],
-    })
-  })
-
-  sources.push(
-    { id: 'li-enrich', name: 'JD Enrichment & Parsing', location: 'Full Description & Tech Stack', color: '#10b981' },
-    { id: 'li-ai', name: 'Gemini 3.6 Scoring Engine', location: 'Stack Alignment & Ranking', color: '#8b5cf6' }
-  )
+  const sources = [
+    { id: 'bdjobs-feed', name: 'BDjobs Scraper', location: 'Bangladesh Tech & Software', color: '#f59e0b', icon: '🇧🇩' },
+    { id: 'indeed-feed', name: 'Indeed Bangladesh', location: 'Local Tech Feeds', color: '#003a9b', icon: '🔍' },
+    { id: 'linkedin-feed', name: 'LinkedIn Live Feeds', location: `${locations.map(l => l.location || 'Target').join(', ')}`, color: '#0a66c2', icon: '💼' },
+    { id: 'wwr-feed', name: 'WeWorkRemotely', location: 'Programming & Remote RSS', color: '#14b8a6', icon: '🏠' },
+    { id: 'remotive-feed', name: 'Remotive & RemoteOK', location: 'Worldwide Software Roles', color: '#10b981', icon: '🌐' },
+    { id: 'jobicy-feed', name: 'Jobicy & Arbeitnow', location: 'Global & EU Tech Boards', color: '#8b5cf6', icon: '📋' },
+    { id: 'dedup-enrich', name: 'Deduplication & Parsing', location: 'Cross-platform Match & Clean', color: '#f97316', icon: '⚡' },
+    { id: 'gemini-scoring', name: 'Gemini AI Scoring Engine', location: 'Resume Stack Alignment', color: '#ec4899', icon: '🤖' },
+  ]
 
   const [activeIndex, setActiveIndex] = useState(0)
   const [progress, setProgress] = useState(0)
@@ -88,11 +81,11 @@ export default function SearchProgress({ timeframe, config, locations: propLocat
         <div className="progress-header">
           <div className="progress-status-pill">
             <span className="live-pulse-dot" />
-            <span>Scanning LinkedIn Feeds · {secondsElapsed}s elapsed</span>
+            <span>Scanning 8 Job Networks · {secondsElapsed}s elapsed</span>
           </div>
-          <h2 className="progress-headline">Querying {locations.length} Target Location Feeds ({tfLabel})</h2>
+          <h2 className="progress-headline">Querying 8 Platforms across {locations.length} Target Locations ({tfLabel})</h2>
           <p className="progress-subtext">
-            Crawling {locListStr} with Crawlee &amp; Playwright, enriching tech stack requirements, and ranking with Gemini AI.
+            Scanning BDjobs, Indeed, LinkedIn, WeWorkRemotely, Remotive, RemoteOK, Jobicy &amp; Arbeitnow simultaneously, eliminating duplicates, and scoring with Gemini AI.
           </p>
         </div>
 
@@ -122,9 +115,9 @@ export default function SearchProgress({ timeframe, config, locations: propLocat
                 <div className="scan-card-left">
                   <div
                     className="scan-avatar"
-                    style={{ borderColor: source.color, color: source.color }}
+                    style={{ borderColor: source.color, color: source.color, fontSize: '15px', display: 'flex', alignItems: 'center', justifyContent: 'center' }}
                   >
-                    <span className="scan-color-indicator" style={{ backgroundColor: source.color }} />
+                    {source.icon || <span className="scan-color-indicator" style={{ backgroundColor: source.color }} />}
                   </div>
                   <div>
                     <div className="scan-source-name">{source.name}</div>
