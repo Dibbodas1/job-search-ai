@@ -10,3 +10,4 @@ python-dotenv
 playwright
 crawlee[playwright]
 gunicorn
+apify-client

@@ -17,13 +17,11 @@ load_dotenv()
 
 # Import scraper functions
 from scrape_jobs import (
-    fetch_linkedin_jobs, fetch_linkedin_guest_jobs, fetch_remotive_jobs, fetch_jobicy_jobs,
-    fetch_remoteok_jobs, fetch_arbeitnow_jobs, enrich_linkedin_job,
+    fetch_jobs_via_apify, normalize_linkedin_url,
     extract_experience, classify_remote, classify_workplace, is_tech_job,
     normalize_dedup, format_date_str, is_within_timeframe, write_excel,
-    RESUME_SKILLS, normalize_linkedin_url, fetch_linkedin_playwright_jobs,
+    RESUME_SKILLS,
     generate_search_queries_from_skills,
-    fetch_weworkremotely_jobs, fetch_bdjobs_jobs, fetch_indeed_bd_jobs,
 )
 
 frontend_dist = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'frontend', 'dist')
@@ -400,53 +398,13 @@ def search_jobs():
                 loc_queries = list(dict.fromkeys(loc_queries))[:10]
 
             # ── Determine keyword list for non-LinkedIn sources ───────────────
-            bd_keywords = [
-                "react developer", "full stack developer", "software engineer",
-                "nodejs developer", "next.js developer", "javascript developer",
-            ]
+            pass
 
-            # ── Parallel multi-source fetch ───────────────────────────────────
-            all_raw_candidates = []
-            import threading
-            raw_lock = threading.Lock()
+            # ── Fetch using Apify ─────────────────────────────────────────────
+            # Import removed
+            all_raw_candidates = fetch_jobs_via_apify(loc_queries, timeframe=timeframe, location=loc_name, limit=50)
 
-            def _collect(fut_result):
-                """Thread-safe collector for results from any source."""
-                try:
-                    items = fut_result.result()
-                    if items:
-                        with raw_lock:
-                            all_raw_candidates.extend(items)
-                except Exception as e:
-                    print(f"     [Source fetch error]: {e}")
-
-            with ThreadPoolExecutor(max_workers=8) as pool:
-                futures = []
-
-                # LinkedIn always runs for both local and worldwide
-                futures.append(pool.submit(
-                    fetch_linkedin_playwright_jobs, loc_queries,
-                    timeframe, is_worldwide, loc_wp
-                ))
-
-                if is_worldwide:
-                    # ── Remote / Worldwide additional sources ─────────────────
-                    futures.append(pool.submit(fetch_remotive_jobs, max_hours))
-                    futures.append(pool.submit(fetch_jobicy_jobs, "react", max_hours))
-                    futures.append(pool.submit(fetch_jobicy_jobs, "javascript", max_hours))
-                    futures.append(pool.submit(fetch_remoteok_jobs, "javascript", max_hours))
-                    futures.append(pool.submit(fetch_remoteok_jobs, "react", max_hours))
-                    futures.append(pool.submit(fetch_arbeitnow_jobs, max_hours))
-                    futures.append(pool.submit(fetch_weworkremotely_jobs, max_hours))
-                else:
-                    # ── Bangladesh / local additional sources ─────────────────
-                    futures.append(pool.submit(fetch_bdjobs_jobs, bd_keywords, max_hours))
-                    futures.append(pool.submit(fetch_indeed_bd_jobs, bd_keywords[:3], max_hours))
-
-                for fut in as_completed(futures):
-                    _collect(fut)
-
-            print(f">> Combined {len(all_raw_candidates)} raw candidates from all sources for '{loc_name}'")
+            print(f">> Fetched {len(all_raw_candidates)} raw candidates from Apify for '{loc_name}'")
 
             # ── Dedup across all sources and apply quality filters ─────────────
             raw_target_jobs = []
@@ -480,9 +438,6 @@ def search_jobs():
             target_jobs = []
             with ThreadPoolExecutor(max_workers=6) as executor:
                 def _enrich_single(j):
-                    src_name = j.get("source") or "LinkedIn"
-                    if "linkedin" in str(src_name).lower():
-                        return enrich_linkedin_job(j)
                     return j
 
                 enriched_futs = [executor.submit(_enrich_single, j) for j in to_enrich]

@@ -282,16 +282,9 @@ export default function SearchPanel({ config, onChange, onSearch }) {
         {/* ─── Target Channels & Platforms Indicator ───────────────────────── */}
         <div className="sources-ready-bar">
           <div className="sources-ready-header-row">
-            <span className="sources-ready-title">Active Job Platforms (8 Networks):</span>
+            <span className="sources-ready-title">Active Job Platform:</span>
             <div className="platform-mini-badges">
-              <span className="mini-plat-pill"><span className="mini-dot" style={{ background: '#f59e0b' }} />🇧🇩 BDjobs</span>
-              <span className="mini-plat-pill"><span className="mini-dot" style={{ background: '#003a9b' }} />🔍 Indeed</span>
               <span className="mini-plat-pill"><span className="mini-dot" style={{ background: '#0a66c2' }} />💼 LinkedIn</span>
-              <span className="mini-plat-pill"><span className="mini-dot" style={{ background: '#14b8a6' }} />🏠 WeWorkRemotely</span>
-              <span className="mini-plat-pill"><span className="mini-dot" style={{ background: '#10b981' }} />🌐 Remotive</span>
-              <span className="mini-plat-pill"><span className="mini-dot" style={{ background: '#ec4899' }} />🟢 RemoteOK</span>
-              <span className="mini-plat-pill"><span className="mini-dot" style={{ background: '#f97316' }} />📋 Jobicy</span>
-              <span className="mini-plat-pill"><span className="mini-dot" style={{ background: '#8b5cf6' }} />⚡ Arbeitnow</span>
             </div>
           </div>
           <div className="sources-ready-list">
@@ -301,9 +294,7 @@ export default function SearchPanel({ config, onChange, onSearch }) {
               const isBD = locLower.includes('bangladesh') || locLower.includes('dhaka')
               const wp = locItem.workplace || 'all'
               const wpName = wp === 'all' ? 'All Workplace Modes' : wp.toUpperCase()
-              const networks = isBD
-                ? 'BDjobs + Indeed + LinkedIn'
-                : 'LinkedIn + WeWorkRemotely + Remotive + Jobicy + RemoteOK + Arbeitnow'
+              const networks = 'LinkedIn'
               return (
                 <span className="source-ready-tag" key={locItem.id || i}>
                   <CheckIcon size={11} className="source-check-icon" />
@@ -322,11 +313,9 @@ export default function SearchPanel({ config, onChange, onSearch }) {
             id="search-btn"
           >
             <SearchIcon size={18} />
-            <span>Scan 8 Platforms ({locations.length} Location Targets)</span>
+            <span>Scan LinkedIn ({locations.length} Location Targets)</span>
           </button>
-          <span className="search-time-note">
-            Concurrent multi-source search across BDjobs, Indeed, LinkedIn, WeWorkRemotely, Remotive, Jobicy, RemoteOK &amp; Arbeitnow
-          </span>
+            Real-time search via Apify on LinkedIn
         </div>
       </div>
     </div>

@@ -349,7 +349,7 @@ export default function App() {
             <div className="workspace-header">
               <h2 className="workspace-title">Skills Profile Ready for Matching</h2>
               <p className="workspace-subtitle">
-                Customize your technical skills and target locations below, then launch the multi-platform search across BDjobs, Indeed, LinkedIn, WeWorkRemotely, and more.
+                Customize your technical skills and target locations below, then launch the targeted search on LinkedIn.
               </p>
             </div>
 

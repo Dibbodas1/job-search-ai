@@ -10,12 +10,7 @@ export default function SearchProgress({ timeframe, config, locations: propLocat
   ]
 
   const sources = [
-    { id: 'bdjobs-feed', name: 'BDjobs Scraper', location: 'Bangladesh Tech & Software', color: '#f59e0b', icon: '🇧🇩' },
-    { id: 'indeed-feed', name: 'Indeed Bangladesh', location: 'Local Tech Feeds', color: '#003a9b', icon: '🔍' },
     { id: 'linkedin-feed', name: 'LinkedIn Live Feeds', location: `${locations.map(l => l.location || 'Target').join(', ')}`, color: '#0a66c2', icon: '💼' },
-    { id: 'wwr-feed', name: 'WeWorkRemotely', location: 'Programming & Remote RSS', color: '#14b8a6', icon: '🏠' },
-    { id: 'remotive-feed', name: 'Remotive & RemoteOK', location: 'Worldwide Software Roles', color: '#10b981', icon: '🌐' },
-    { id: 'jobicy-feed', name: 'Jobicy & Arbeitnow', location: 'Global & EU Tech Boards', color: '#8b5cf6', icon: '📋' },
     { id: 'dedup-enrich', name: 'Deduplication & Parsing', location: 'Cross-platform Match & Clean', color: '#f97316', icon: '⚡' },
     { id: 'gemini-scoring', name: 'Gemini AI Scoring Engine', location: 'Resume Stack Alignment', color: '#ec4899', icon: '🤖' },
   ]
@@ -81,11 +76,11 @@ export default function SearchProgress({ timeframe, config, locations: propLocat
         <div className="progress-header">
           <div className="progress-status-pill">
             <span className="live-pulse-dot" />
-            <span>Scanning 8 Job Networks · {secondsElapsed}s elapsed</span>
+            <span>Scanning LinkedIn · {secondsElapsed}s elapsed</span>
           </div>
-          <h2 className="progress-headline">Querying 8 Platforms across {locations.length} Target Locations ({tfLabel})</h2>
+          <h2 className="progress-headline">Querying LinkedIn across {locations.length} Target Locations ({tfLabel})</h2>
           <p className="progress-subtext">
-            Scanning BDjobs, Indeed, LinkedIn, WeWorkRemotely, Remotive, RemoteOK, Jobicy &amp; Arbeitnow simultaneously, eliminating duplicates, and scoring with Gemini AI.
+            Scanning LinkedIn for live developer roles, extracting requirements, and scoring with Gemini AI.
           </p>
         </div>
 
