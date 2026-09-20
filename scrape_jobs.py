@@ -449,6 +449,7 @@ def fetch_jobs_via_apify(queries, timeframe="week", location="Worldwide", limit=
     # Let's formulate the input for a generic or bebity scraper.
     # To be safe and simple, let's just use the first query or combine them.
     # Actually, let's map the queries.
+    original_location = location
     if location.lower() in ["worldwide", "global", "anywhere"]:
         location = "United States"
 
@@ -469,12 +470,13 @@ def fetch_jobs_via_apify(queries, timeframe="week", location="Worldwide", limit=
             job = {
                 "title": item.get("title") or item.get("positionName") or "Unknown Title",
                 "company": item.get("companyName") or item.get("company") or "Unknown Company",
-                "location": item.get("location") or location,
+                "location": item.get("location") or original_location,
                 "link": item.get("url") or item.get("jobUrl") or "",
                 "description": item.get("description") or "",
                 "date_posted": item.get("postedAt") or item.get("publishedAt") or "",
-                "source": "LinkedIn (Apify)",
-                "workplace_type": item.get("workplaceType") or ""
+                "source": "LinkedIn",
+                "workplace_type": item.get("workplaceType") or "",
+                "target_location": original_location
             }
             jobs.append(job)
             
